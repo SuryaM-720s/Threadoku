@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Threadoku Solver</title>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 20px;
+        }
+        .board-container {
+            margin-top: 20px;
+        }
+        .sudoku-board {
+            display: grid;
+            grid-template-columns: repeat(9, 1fr);
+            grid-template-rows: repeat(9, 1fr);
+            gap: 1px;
+            border: 2px solid #333;
+            background-color: #333;
+            width: 450px;
+            height: 450px;
+        }
+        .cell {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: white;
+            font-size: 24px;
+            font-weight: bold;
+            cursor: default;
+            user-select: none;
+        }
+        .cell.initial {
+            color: #333;
+        }
+        .cell.solved {
+            color: #0066cc;
+        }
+        .cell:nth-child(3n) {
+            border-right: 2px solid #333;
+        }
+        .cell:nth-child(9n) {
+            border-right: none;
+        }
+        .cell:nth-child(n+19):nth-child(-n+27),
+        .cell:nth-child(n+46):nth-child(-n+54) {
+            border-bottom: 2px solid #333;
+        }
+        .buttons {
+            display: flex;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+        #generate-btn {
+            background-color: #4CAF50;
+            color: white;
+        }
+        #generate-btn:hover {
+            background-color: #45a049;
+        }
+        #solve-btn {
+            background-color: #2196F3;
+            color: white;
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        #solve-btn.active {
+            opacity: 1;
+            cursor: pointer;
+        }
+        #solve-btn.active:hover {
+            background-color: #0b7dda;
+        }
+        .status {
+            margin-top: 20px;
+            font-size: 18px;
+            font-weight: bold;
+            height: 24px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Threadoku Solver</h1>
+    <div class="container">
+        <div class="board-container">
+            <div class="sudoku-board" id="sudoku-board"></div>
+        </div>
+        <div class="buttons">
+            <button id="generate-btn">Generate Board</button>
+            <button id="solve-btn">Solve Board</button>
+        </div>
+        <div class="status" id="status"></div>
+    </div>
+
+    <script>
+        const N = 9;
+        let board = Array(9).fill().map(() => Array(9).fill(0));
+        let originalBoard = Array(9).fill().map(() => Array(9).fill(0));
+        const solveBtn = document.getElementById('solve-btn');
+        const generateBtn = document.getElementById('generate-btn');
+        const statusDisplay = document.getElementById('status');
+        
+        // Initialize the board
+        function createBoard() {
+            const boardElement = document.getElementById('sudoku-board');
+            boardElement.innerHTML = '';
+            
+            for (let i = 0; i < N; i++) {
+                for (let j = 0; j < N; j++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.id = `cell-${i}-${j}`;
+                    boardElement.appendChild(cell);
+                }
+            }
+        }
+        
+        // Update the board display based on the current board state
+        function updateBoard() {
+            for (let i = 0; i < N; i++) {
+                for (let j = 0; j < N; j++) {
+                    const cell = document.getElementById(`cell-${i}-${j}`);
+                    if (board[i][j] === 0) {
+                        cell.textContent = '';
+                        cell.className = 'cell';
+                    } else if (originalBoard[i][j] !== 0) {
+                        cell.textContent = board[i][j];
+                        cell.className = 'cell initial';
+                    } else {
+                        cell.textContent = board[i][j];
+                        cell.className = 'cell solved';
+                    }
+                }
+            }
+        }
+        
+        // Fetch a random Sudoku board from the API
+        async function fetchRandomSudoku() {
+            statusDisplay.textContent = 'Fetching a random board...';
+            try {
+                const response = await fetch('https://sudoku-api.vercel.app/api/dosuku');
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+                const data = await response.json();
+                
+                for (let i = 0; i < N; i++) {
+                    for (let j = 0; j < N; j++) {
+                        board[i][j] = data.newboard.grids[0].value[i][j];
+                        originalBoard[i][j] = board[i][j]; // Save the original board
+                    }
+                }
+                
+                updateBoard();
+                solveBtn.classList.add('active');
+                statusDisplay.textContent = 'Board generated! Click Solve to solve.';
+            } catch (error) {
+                console.error('Error fetching sudoku:', error);
+                statusDisplay.textContent = 'Error fetching board. Please try again.';
+            }
+        }
+        
+        // Check if placing a number in a specific position is valid
+        function isRowValid(row, num) {
+            for (let col = 0; col < N; col++) {
+                if (board[row][col] === num) return false;
+            }
+            return true;
+        }
+        
+        function isColValid(col, num) {
+            for (let row = 0; row < N; row++) {
+                if (board[row][col] === num) return false;
+            }
+            return true;
+        }
+        
+        function isBoxValid(startRow, startCol, num) {
+            for (let i = 0; i < 3; i++) {
+                for (let j = 0; j < 3; j++) {
+                    if (board[i + startRow][j + startCol] === num) return false;
+                }
+            }
+            return true;
+        }
+        
+        function isValid(row, col, num) {
+            return isRowValid(row, num) && 
+                   isColValid(col, num) && 
+                   isBoxValid(row - row % 3, col - col % 3, num);
+        }
+        
+        // Solve the Sudoku board using backtracking
+        function solveSudoku() {
+            for (let row = 0; row < N; row++) {
+                for (let col = 0; col < N; col++) {
+                    if (board[row][col] === 0) {
+                        for (let num = 1; num <= 9; num++) {
+                            if (isValid(row, col, num)) {
+                                board[row][col] = num;
+                                if (solveSudoku()) {
+                                    return true;
+                                }
+                                board[row][col] = 0; // backtrack
+                            }
+                        }
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        
+        // Function to handle solving with animation
+        async function solveBoardWithAnimation() {
+            // Make a copy of the original board
+            for (let i = 0; i < N; i++) {
+                for (let j = 0; j < N; j++) {
+                    board[i][j] = originalBoard[i][j];
+                }
+            }
+            
+            statusDisplay.textContent = 'Solving...';
+            
+            // Allow UI to update before solving
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            const startTime = performance.now();
+            const solved = solveSudoku();
+            const endTime = performance.now();
+            
+            if (solved) {
+                updateBoard();
+                statusDisplay.textContent = `Solved in ${((endTime - startTime) / 1000).toFixed(2)} seconds!`;
+            } else {
+                statusDisplay.textContent = 'No solution exists for this board.';
+            }
+        }
+        
+        // Event listeners
+        generateBtn.addEventListener('click', fetchRandomSudoku);
+        
+        solveBtn.addEventListener('click', function() {
+            if (this.classList.contains('active')) {
+                solveBoardWithAnimation();
+            }
+        });
+        
+        // Initialize the game
+        createBoard();
+        updateBoard();
+    </script>
+</body>
+</html>
