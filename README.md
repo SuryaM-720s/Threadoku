@@ -2,6 +2,8 @@
 
 Threadoku is a high-performance Sudoku puzzle project that demonstrates concurrent programming by leveraging multi-threading (POSIX Threads or C++ Threads) for efficient solving. The project is split into a core C++ solver and a WebAssembly-integrated component, combining native performance with web accessibility.
 
+Play Threadoku now: https://suryam-720s.github.io/Threadoku/
+
 ---
 
 ## Features
@@ -74,7 +76,7 @@ You can compile the core C++ logic into a standalone command-line executable for
 
 ```bash
 # Clone the repository
-git clone [https://github.com/SuryaM-720s/Threadoku.git](https://github.com/SuryaM-720s/Threadoku.git)
+git clone https://github.com/SuryaM-720s/Threadoku.git
 cd Threadoku
 
 # Create and enter the build directory
@@ -85,9 +87,28 @@ cmake ..
 
 # Build the executable
 make
+```
+### 2. WebAssembly Application
 
-# Example Usage (The executable name and arguments may vary based on your Makefile)
-# ./threadoku_solver --solve easy.txt
+This process compiles the C++ code to a WebAssembly module and then requires a local server to run the web interface.
+
+```bash
+# Activate Emscripten: Ensure your Emscripten environment is initialized in your terminal.
+source <path/to/emsdk>/emsdk_env.sh
+
+# Compile to WASM: Compile the C++ code using the Emscripten toolchain via CMake.
+
+# (Inside your 'build' directory)
+emcmake cmake .. 
+make
+
+# Serve Files: Use a local web server (like http-server) to host the files.
+
+# Install an HTTP server package
+npm install -g http-server 
+
+# Run the server from the directory containing index.html
+http-server
 ```
 ---
 
