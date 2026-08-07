@@ -3,90 +3,90 @@ import SudokuModule from './sudoku.js';
 
 export default class SudokuSolver {
     constructor() {
-        this.moduleLoaded = false;
         this.module = null;
-        
-        // Initialize the module automatically
-        this.init();
+        this.ready = this.init();
     }
-    
+
     // Asynchronously load the WebAssembly module
     async init() {
-        try {
-            this.module = await SudokuModule();
-            this.moduleLoaded = true;
-            console.log("WebAssembly Sudoku Module loaded successfully!");
-        } catch (error) {
-            console.error("Failed to load WebAssembly module:", error);
+        if (typeof SharedArrayBuffer === 'undefined') {
+            throw new Error(
+                'SharedArrayBuffer unavailable - the page is not cross-origin isolated. ' +
+                'The pthreads WASM build cannot start without it.'
+            );
         }
+
+        this.module = await SudokuModule();
+        return this.module;
     }
-    
+
     isModuleLoaded() {
-        return this.moduleLoaded;
+        return this.module !== null;
     }
-    
-    // Convert JavaScript 2D array to WASM vector format
-    // WASM can't directly use JS arrays, so we need this conversion
+
+    // Convert JavaScript 2D array to WASM vector format.
+    // Each row needs a fresh VectorInt; push_back copies it, so delete after pushing.
     convertBoardToWasm(board) {
-        const wasmVectorInt = new this.module.VectorInt();
         const wasmBoard = new this.module.VectorVectorInt();
-        
+
         for (let i = 0; i < 9; i++) {
+            const row = new this.module.VectorInt();
             for (let j = 0; j < 9; j++) {
-                wasmVectorInt.push_back(board[i][j]);
+                row.push_back(board[i][j]);
             }
-            wasmBoard.push_back(wasmVectorInt);
-            // Free the row vector to prevent memory leaks
-            wasmVectorInt.delete();
+            wasmBoard.push_back(row);
+            row.delete();
         }
-        
+
         return wasmBoard;
     }
-    
+
     // Convert WASM vector back to JavaScript 2D array
     convertWasmToBoard(wasmBoard) {
         const board = Array(9).fill().map(() => Array(9).fill(0));
-        
+
         for (let i = 0; i < 9; i++) {
             const row = wasmBoard.get(i);
             for (let j = 0; j < 9; j++) {
                 board[i][j] = row.get(j);
             }
+            row.delete();
         }
-        
+
         return board;
     }
-    
-    // Use C++ threading to check if a number is valid at a position
+
+    // Check whether a number may legally go in a cell (single call into C++)
     checkValid(board, row, col, num) {
-        if (!this.moduleLoaded) {
-            throw new Error("WebAssembly module not loaded yet");
-        }
-        
+        this.assertLoaded();
+
         const wasmBoard = this.convertBoardToWasm(board);
-        const isValid = this.module.isValid(wasmBoard, row, col, num);
-        
-        // Clean up WASM memory
-        wasmBoard.delete();
-        
-        return isValid;
+        try {
+            return this.module.isValid(wasmBoard, row, col, num);
+        } finally {
+            wasmBoard.delete();
+        }
     }
-    
-    // Solve the Sudoku puzzle using the C++ backtracking algorithm
+
+    // Solve the puzzle in C++
     solve(board) {
-        if (!this.moduleLoaded) {
-            throw new Error("WebAssembly module not loaded yet");
-        }
-        
+        this.assertLoaded();
+
         const wasmBoard = this.convertBoardToWasm(board);
-        const solvedWasmBoard = this.module.solveSudoku(wasmBoard);
-        
-        const solvedBoard = this.convertWasmToBoard(solvedWasmBoard);
-        
-        // Clean up WASM memory
-        wasmBoard.delete();
-        solvedWasmBoard.delete();
-        
-        return solvedBoard;
+        let solvedWasmBoard = null;
+
+        try {
+            solvedWasmBoard = this.module.solveSudoku(wasmBoard);
+            return this.convertWasmToBoard(solvedWasmBoard);
+        } finally {
+            wasmBoard.delete();
+            if (solvedWasmBoard) solvedWasmBoard.delete();
+        }
+    }
+
+    assertLoaded() {
+        if (!this.module) {
+            throw new Error('WebAssembly module not loaded yet - await solver.ready first');
+        }
     }
 }

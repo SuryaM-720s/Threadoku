@@ -103,6 +103,8 @@
             height: 24px;
         }
     </style>
+    <!-- Classic script on purpose: it needs document.currentScript -->
+    <script src="coi-serviceworker.js"></script>
 </head>
 <body>
     <h1>Threadoku Solver</h1>
@@ -117,19 +119,74 @@
         <div class="status" id="status"></div>
     </div>
 
-    <script>
+    <script type="module">
         const N = 9;
         let board = Array(9).fill().map(() => Array(9).fill(0));
         let originalBoard = Array(9).fill().map(() => Array(9).fill(0));
         const solveBtn = document.getElementById('solve-btn');
         const generateBtn = document.getElementById('generate-btn');
         const statusDisplay = document.getElementById('status');
-        
-        // Initialize the board
+
+        // ---- WASM solver ----
+        // No JS fallback on purpose: if WASM fails, say so instead of hiding it
+
+        let engineReady = false;
+        let boardReady = false;
+        let nextRequestId = 0;
+        const pending = new Map();
+
+        const solverWorker = new Worker('./solver-worker.js', { type: 'module' });
+
+        solverWorker.onmessage = (event) => {
+            const { type, id } = event.data;
+
+            if (type === 'ready') {
+                engineReady = true;
+                refreshSolveButton();
+                return;
+            }
+
+            if (type === 'solved') {
+                const resolve = pending.get(id);
+                pending.delete(id);
+                if (resolve) resolve(event.data);
+                return;
+            }
+
+            if (type === 'error') {
+                if (id !== undefined && pending.has(id)) {
+                    const resolve = pending.get(id);
+                    pending.delete(id);
+                    resolve({ error: event.data.error });
+                } else {
+                    engineReady = false;
+                    statusDisplay.textContent = 'WASM solver unavailable: ' + event.data.error;
+                    refreshSolveButton();
+                }
+            }
+        };
+
+        solverWorker.onerror = (err) => {
+            engineReady = false;
+            statusDisplay.textContent =
+                'Worker error: ' + (err.message || 'failed to load solver-worker.js');
+            refreshSolveButton();
+        };
+
+        function solveInWasm(puzzle) {
+            const id = nextRequestId++;
+            return new Promise((resolve) => {
+                pending.set(id, resolve);
+                solverWorker.postMessage({ id, board: puzzle });
+            });
+        }
+
+        // ---- board rendering ----
+
         function createBoard() {
             const boardElement = document.getElementById('sudoku-board');
             boardElement.innerHTML = '';
-            
+
             for (let i = 0; i < N; i++) {
                 for (let j = 0; j < N; j++) {
                     const cell = document.createElement('div');
@@ -139,8 +196,7 @@
                 }
             }
         }
-        
-        // Update the board display based on the current board state
+
         function updateBoard() {
             for (let i = 0; i < N; i++) {
                 for (let j = 0; j < N; j++) {
@@ -158,120 +214,92 @@
                 }
             }
         }
-        
-        // Fetch a random Sudoku board from the API
+
+        function refreshSolveButton() {
+            solveBtn.classList.toggle('active', engineReady && boardReady);
+        }
+
+        // ---- puzzle source ----
+
+        // Fallback so the demo still works if the API is down
+        const FALLBACK_PUZZLE = [
+            [5, 3, 0, 0, 7, 0, 0, 0, 0],
+            [6, 0, 0, 1, 9, 5, 0, 0, 0],
+            [0, 9, 8, 0, 0, 0, 0, 6, 0],
+            [8, 0, 0, 0, 6, 0, 0, 0, 3],
+            [4, 0, 0, 8, 0, 3, 0, 0, 1],
+            [7, 0, 0, 0, 2, 0, 0, 0, 6],
+            [0, 6, 0, 0, 0, 0, 2, 8, 0],
+            [0, 0, 0, 4, 1, 9, 0, 0, 5],
+            [0, 0, 0, 0, 8, 0, 0, 7, 9],
+        ];
+
         async function fetchRandomSudoku() {
             statusDisplay.textContent = 'Fetching a random board...';
+            let grid = null;
+
             try {
                 const response = await fetch('https://sudoku-api.vercel.app/api/dosuku');
-                if (!response.ok) {
-                    throw new Error('Network response was not ok');
-                }
+                if (!response.ok) throw new Error('Network response was not ok');
                 const data = await response.json();
-                
-                for (let i = 0; i < N; i++) {
-                    for (let j = 0; j < N; j++) {
-                        board[i][j] = data.newboard.grids[0].value[i][j];
-                        originalBoard[i][j] = board[i][j]; // Save the original board
-                    }
-                }
-                
-                updateBoard();
-                solveBtn.classList.add('active');
-                statusDisplay.textContent = 'Board generated! Click Solve to solve.';
+                grid = data.newboard.grids[0].value;
             } catch (error) {
                 console.error('Error fetching sudoku:', error);
-                statusDisplay.textContent = 'Error fetching board. Please try again.';
+                grid = FALLBACK_PUZZLE;
             }
-        }
-        
-        // Check if placing a number in a specific position is valid
-        function isRowValid(row, num) {
-            for (let col = 0; col < N; col++) {
-                if (board[row][col] === num) return false;
-            }
-            return true;
-        }
-        
-        function isColValid(col, num) {
-            for (let row = 0; row < N; row++) {
-                if (board[row][col] === num) return false;
-            }
-            return true;
-        }
-        
-        function isBoxValid(startRow, startCol, num) {
-            for (let i = 0; i < 3; i++) {
-                for (let j = 0; j < 3; j++) {
-                    if (board[i + startRow][j + startCol] === num) return false;
-                }
-            }
-            return true;
-        }
-        
-        function isValid(row, col, num) {
-            return isRowValid(row, num) && 
-                   isColValid(col, num) && 
-                   isBoxValid(row - row % 3, col - col % 3, num);
-        }
-        
-        // Solve the Sudoku board using backtracking
-        function solveSudoku() {
-            for (let row = 0; row < N; row++) {
-                for (let col = 0; col < N; col++) {
-                    if (board[row][col] === 0) {
-                        for (let num = 1; num <= 9; num++) {
-                            if (isValid(row, col, num)) {
-                                board[row][col] = num;
-                                if (solveSudoku()) {
-                                    return true;
-                                }
-                                board[row][col] = 0; // backtrack
-                            }
-                        }
-                        return false;
-                    }
-                }
-            }
-            return true;
-        }
-        
-        // Function to handle solving with animation
-        async function solveBoardWithAnimation() {
-            // Make a copy of the original board
+
             for (let i = 0; i < N; i++) {
                 for (let j = 0; j < N; j++) {
-                    board[i][j] = originalBoard[i][j];
+                    board[i][j] = grid[i][j];
+                    originalBoard[i][j] = grid[i][j];
                 }
             }
-            
-            statusDisplay.textContent = 'Solving...';
-            
-            // Allow UI to update before solving
-            await new Promise(resolve => setTimeout(resolve, 100));
-            
-            const startTime = performance.now();
-            const solved = solveSudoku();
-            const endTime = performance.now();
-            
-            if (solved) {
-                updateBoard();
-                statusDisplay.textContent = `Solved in ${((endTime - startTime) / 1000).toFixed(2)} seconds!`;
-            } else {
-                statusDisplay.textContent = 'No solution exists for this board.';
-            }
+
+            updateBoard();
+            boardReady = true;
+            refreshSolveButton();
+            statusDisplay.textContent = grid === FALLBACK_PUZZLE
+                ? 'Puzzle API unreachable - loaded a built-in board.'
+                : 'Board generated! Click Solve to solve.';
         }
-        
-        // Event listeners
-        generateBtn.addEventListener('click', fetchRandomSudoku);
-        
-        solveBtn.addEventListener('click', function() {
-            if (this.classList.contains('active')) {
-                solveBoardWithAnimation();
+
+        // ---- solving ----
+
+        async function solveBoard() {
+            // Always solve from the givens, not a previous solution
+            const puzzle = originalBoard.map((row) => row.slice());
+
+            // Don't await requestAnimationFrame here - it never fires in a hidden tab
+            statusDisplay.textContent = 'Solving in WebAssembly...';
+
+            const result = await solveInWasm(puzzle);
+
+            if (result.error) {
+                statusDisplay.textContent = 'Solver error: ' + result.error;
+                return;
             }
+
+            // Unsolvable puzzles come back with empty cells still in them
+            const solved = result.solution.every((row) => row.every((v) => v !== 0));
+
+            if (!solved) {
+                statusDisplay.textContent = 'No solution exists for this board.';
+                return;
+            }
+
+            board = result.solution;
+            updateBoard();
+            statusDisplay.textContent = `Solved in ${result.elapsedMs.toFixed(2)} ms`;
+        }
+
+        // ---- wiring ----
+
+        generateBtn.addEventListener('click', fetchRandomSudoku);
+
+        solveBtn.addEventListener('click', function () {
+            if (this.classList.contains('active')) solveBoard();
         });
-        
-        // Initialize the game
+
         createBoard();
         updateBoard();
     </script>

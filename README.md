@@ -8,11 +8,12 @@ Play Threadoku now: https://suryam-720s.github.io/Threadoku/
 
 ## Features
 
-* **Multi-threaded Solving Algorithm:** The core C++ solver utilizes concurrent programming to speed up the puzzle-solving process significantly.
+* **Multi-threaded Solving Algorithm:** The C++ solver splits the search tree at its root, giving each candidate for the first empty cell its own `std::thread`. The first branch to finish wins and the rest abort early.
 * **WebAssembly Integration:** Compiles the C++ solver to WebAssembly, delivering native C++ performance directly in the browser via JavaScript accessibility.
 * **Dynamic Puzzle Generation:** Integrates with an external Sudoku API to fetch puzzles dynamically.
 * **Responsive Web Interface:** Provides a clean visualization of both the puzzle and the step-by-step solving process.
 * **Cross-platform Compatibility:** The web application works on all modern browsers and devices.
+* **Cross-Origin Isolation:** A service worker supplies the COOP/COEP headers that `SharedArrayBuffer` requires, so the threaded WASM build runs on GitHub Pages.
 
 ---
 
@@ -39,77 +40,78 @@ This final state validates the accuracy and speed of the multi-threaded C++ solv
 
 ## Installation and Setup
 
-Since this project involves both a standard C++ executable and a WebAssembly component, the prerequisites are extensive and essential for compilation.
+Since this project compiles C++ to WebAssembly, the prerequisites below are essential for compilation.
 
 ### Prerequisites
 
 | Component | Minimum Version / Requirement | Notes |
 | :--- | :--- | :--- |
-| **Build System** | **CMake** (3.14 or higher) | Used to configure the C++ build. |
-| **C++ Toolchain** | C++ compiler with **C++17** support | Must support C++ threading features (e.g., G++/Clang). |
-| **WebAssembly** | **Emscripten SDK** | Required for C++ to `.wasm` compilation. |
-| **Web Server** | **Node.js** and **npm** | Used to install and run a local server to host the WASM component. |
+| **Build System** | **CMake** (3.14 or higher) | Used to configure the WebAssembly build. |
+| **WebAssembly** | **Emscripten SDK** | Required for C++ to `.wasm` compilation. Provides `em++` and `emcmake`. |
+| **C++ Toolchain** | **C++17** support | Comes with Emscripten; the solver uses `<thread>`, `<mutex>`, and `<atomic>`. |
+| **Web Server** | Any static file server | e.g. `python3 -m http.server`. Must be `http://`, not `file://`. |
 
 ### Dependencies (C++ Component)
 
-* **CPR library:** Used for handling external API requests (e.g., fetching new puzzles).
-* **nlohmann/json:** Used for parsing and manipulating JSON data from the API.
+* **None beyond the standard library.** The solver uses only `<vector>`, `<thread>`, `<mutex>`, and `<atomic>`, plus Emscripten's `embind` for the JavaScript boundary.
+* Puzzles are fetched in the browser with `fetch()`, so no C++ HTTP or JSON library is needed.
 
 ---
 ## Code Structure
 
 - sudoku_wasm.cpp: Core C++ solving algorithm with multi-threading
 - sudoku-wasm-wrapper.js: JavaScript bridge for WebAssembly integration
+- solver-worker.js: Runs the WASM module in a Web Worker, off the main thread
+- coi-serviceworker.js: Adds COOP/COEP headers so SharedArrayBuffer is available
 - index.html: Web interface with puzzle visualization
 - sudoku.js: Generated JavaScript glue code from Emscripten compilation
 - sudoku.wasm: Compiled WebAssembly binary containing the solver logic
-- CMakeLists.txt: Build configuration for the C++ component
+- build.sh: One-line Emscripten build, as an alternative to CMake
+- CMakeLists.txt: Build configuration for the WebAssembly component
 
 
 ---
 
 ## Build and Run Instructions
 
-### 1. Local C++ Executable (CLI/Testing)
+### 1. Compile the WebAssembly Module
 
-You can compile the core C++ logic into a standalone command-line executable for local testing of the multi-threading performance.
+This compiles the threaded C++ solver into `sudoku.js` and `sudoku.wasm`, written to the
+project root where `index.html` expects them.
 
 ```bash
 # Clone the repository
 git clone https://github.com/SuryaM-720s/Threadoku.git
 cd Threadoku
 
-# Create and enter the build directory
-mkdir build && cd build
-
-# Configure the project with CMake
-cmake ..
-
-# Build the executable
-make
-```
-### 2. WebAssembly Application
-
-This process compiles the C++ code to a WebAssembly module and then requires a local server to run the web interface.
-
-```bash
 # Activate Emscripten: Ensure your Emscripten environment is initialized in your terminal.
 source <path/to/emsdk>/emsdk_env.sh
 
-# Compile to WASM: Compile the C++ code using the Emscripten toolchain via CMake.
+# Create and enter the build directory
+mkdir build && cd build
 
-# (Inside your 'build' directory)
-emcmake cmake .. 
+# Configure the project with CMake, using the Emscripten toolchain
+emcmake cmake ..
+
+# Build the module
 make
-
-# Serve Files: Use a local web server (like http-server) to host the files.
-
-# Install an HTTP server package
-npm install -g http-server 
-
-# Run the server from the directory containing index.html
-http-server
 ```
+
+`build.sh` in the project root runs the equivalent `em++` command directly, if you would
+rather skip CMake.
+
+### 2. Run the Web Application
+
+Any static file server will do; the project has no runtime dependencies.
+
+```bash
+# Serve Files: run from the directory containing index.html
+cd ..
+python3 -m http.server 8765
+```
+
+Open **http://localhost:8765**, then click **Generate Board** followed by **Solve Board**.
+
 ---
 
 ## Acknowledgments
